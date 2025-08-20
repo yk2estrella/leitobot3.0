@@ -1,19 +1,26 @@
 // ====== Servidor Express para Render ======
 const express = require("express");
+const qrcode = require("qrcode");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 let lastQR = ""; // guardamos el QR aquí
 
 app.get("/", (req, res) => res.send("✅ Leitobot corriendo en Render 🚀"));
-app.get("/qr", (req, res) => {
+app.get("/qr", async (req, res) => {
   if (!lastQR) {
     res.send("<h2>⏳ Esperando a que se genere un nuevo QR...</h2>");
   } else {
-    res.send(`
-      <h2>📲 Escanea este QR con tu WhatsApp</h2>
-      <img src="https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${lastQR}" />
-    `);
+    try {
+      const qrImage = await qrcode.toDataURL(lastQR);
+      res.send(`
+        <h2>📲 Escanea este QR con tu WhatsApp</h2>
+        <img src="${qrImage}" />
+        <p>⚠️ El QR expira en segundos, recarga esta página si no funciona.</p>
+      `);
+    } catch (err) {
+      res.send("<h2>❌ Error al generar QR.</h2>");
+    }
   }
 });
 app.listen(PORT, () => console.log(`🌐 Servidor web en puerto ${PORT}`));
