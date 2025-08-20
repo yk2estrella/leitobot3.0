@@ -3,14 +3,25 @@ const express = require("express");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+let lastQR = ""; // guardamos el QR aquí
+
 app.get("/", (req, res) => res.send("✅ Leitobot corriendo en Render 🚀"));
+app.get("/qr", (req, res) => {
+  if (!lastQR) {
+    res.send("<h2>⏳ Esperando a que se genere un nuevo QR...</h2>");
+  } else {
+    res.send(`
+      <h2>📲 Escanea este QR con tu WhatsApp</h2>
+      <img src="https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${lastQR}" />
+    `);
+  }
+});
 app.listen(PORT, () => console.log(`🌐 Servidor web en puerto ${PORT}`));
 
 // ====== Dependencias de Baileys ======
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require("@whiskeysockets/baileys");
 const { Boom } = require("@hapi/boom");
 const fs = require("fs");
-const qrcode = require("qrcode-terminal");
 
 // ====== Base de datos simple en JSON ======
 const dbPath = "./carpetas.json";
@@ -35,7 +46,7 @@ async function startBot() {
   const sock = makeWASocket({
     auth: state,
     logger: require("pino")({ level: "silent" }),
-    browser: ["Leitobot", "Chrome", "1.0"] // Evita problemas en Render
+    browser: ["Leitobot", "Chrome", "1.0"]
   });
 
   sock.ev.on("creds.update", saveCreds);
@@ -44,8 +55,8 @@ async function startBot() {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
-      console.log("📲 Escanea el QR para conectar:");
-      qrcode.generate(qr, { small: true });
+      lastQR = qr; // guardamos el QR para mostrar en /qr
+      console.log("✅ Nuevo QR disponible en /qr");
     }
 
     if (connection === "close") {
