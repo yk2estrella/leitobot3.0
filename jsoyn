@@ -1,0 +1,193 @@
+.const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require("@whiskeysockets/baileys");
+const { Boom } = require("@hapi/boom");
+const fs = require("fs");
+const qrcode = require("qrcode");
+const path = require("path");
+
+// Crear carpeta si no existe
+const dataDir = "./carpetas";
+if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir);
+
+// Función para guardar datos
+function guardarCarpeta(nombre, texto) {
+  fs.writeFileSync(path.join(dataDir, nombre + ".txt"), texto);
+}
+
+// Función para leer datos
+function leerCarpeta(nombre) {
+  const ruta = path.join(dataDir, nombre + ".txt");
+  return fs.existsSync(ruta) ? fs.readFileSync(ruta, "utf8") : "📂 Carpeta vacía.";
+}
+
+// Función para buscar en carpetas
+function buscarEnCarpetas(texto) {
+  for (let i = 1; i <= 5; i++) {
+    const datos = leerCarpeta("carpeta0" + i);
+    if (datos.toLowerCase().includes(texto.toLowerCase())) {
+      return `⭐ ¡Manhwa encontrado! Está en la carpeta0${i}.`;
+    }
+  }
+  return "Lo siento, el manhwa que buscas no se encuentra, dile a mi papi que lo añada.";
+}
+
+async function startBot() {
+  const { state, saveCreds } = await useMultiFileAuthState("session");
+
+  const sock = makeWASocket({
+    auth: state,
+    printQRInTerminal: false,
+    logger: require("pino")({ level: "silent" }),
+  });
+
+  sock.ev.on("creds.update", saveCreds);
+
+  sock.ev.on("connection.update", async (update) => {
+    const { connection, lastDisconnect, qr } = update;
+
+    if (qr) {
+      console.log("🔄 Escanea el siguiente QR:");
+      console.log(await qrcode.toString(qr, { type: "terminal" }));
+    }
+
+    if (connection === "close") {
+      const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+      console.log("🔌 Conexión cerrada. Reconectar:", shouldReconnect);
+      if (shouldReconnect) startBot();
+    }
+
+    if (connection === "open") {
+      console.log("✅ Conectado exitosamente a WhatsApp.");
+    }
+  });
+
+  // Bienvenida al grupo
+  sock.ev.on("group-participants.update", async (update) => {
+    const { id, participants, action } = update;
+    if (action === "add") {
+      for (const participant of participants) {
+        try {
+          const ppUrl = await sock.profilePictureUrl(participant, "image");
+          const nombre = participant.split("@")[0];
+          await sock.sendMessage(id, {
+            image: { url: ppUrl },
+            caption: `🌟 ¡Hola! Soy Leitobot y espero disfrutes el grupo @${nombre}`,
+            mentions: [participant],
+          });
+        } catch {
+          await sock.sendMessage(id, {
+            text: `🌟 ¡Hola! Soy Leitobot y espero disfrutes el grupo @${participant.split("@")[0]}`,
+            mentions: [participant],
+          });
+        }
+      }
+    }
+  });
+
+  // Comandos
+  sock.ev.on("messages.upsert", async ({ messages }) => {
+    const msg = messages[0];
+    if (!msg.message || msg.key.fromMe) return;
+
+    const text = msg.message.conversation || msg.message.extendedTextMessage?.text;
+    const from = msg.key.remoteJid;
+    const isGroup = from.endsWith("@g.us");
+
+    if (text?.toLowerCase() === "leitobot") {
+      await sock.sendMessage(from, { text: "🌟 ¡Hola! Soy Leitobot 🤖 ¿En qué puedo ayudarte?" });
+      return;
+    }
+
+    if (text?.startsWith("#tag") && isGroup) {
+      const contenido = text.replace('#tag "', "").replace('"', "");
+      const metadata = await sock.groupMetadata(from);
+      const miembros = metadata.participants.map((p) => p.id);
+      await sock.sendMessage(from, { text: contenido, mentions: miembros });
+    }
+
+    for (let i = 1; i <= 5; i++) {
+      const comando = `#actualizarcarpeta0${i}`;
+      if (text?.startsWith(comando)) {
+        const contenido = text.replace(comando + " ", "");
+        guardarCarpeta("carpeta0" + i, contenido);
+        await sock.sendMessage(from, { text: `📁 Carpeta0${i} actualizada.` });
+        return;
+      }
+    }
+
+    for (let i = 1; i <= 5; i++) {
+      if (text === `#carpeta0${i}`) {
+        const datos = leerCarpeta("carpeta0" + i);
+        await sock.sendMessage(from, { text: datos });
+        return;
+      }
+    }
+
+    if (text?.startsWith("#leitobotbusca")) {
+      const buscarTexto = text.replace('#leitobotbusca "', "").replace('"', "");
+      const resultado = buscarEnCarpetas(buscarTexto);
+      await sock.sendMessage(from, { text: resultado });
+      return;
+    }
+
+    if (text === "#cerrargrupo" && isGroup) {
+      await sock.groupSettingUpdate(from, "announcement");
+      await sock.sendMessage(from, { text: "Buena noche, el grupo será cerrado, hasta mañana. 💕" });
+    }
+
+    if (text === "#abrirgrupo" && isGroup) {
+      await sock.groupSettingUpdate(from, "not_announcement");
+      await sock.sendMessage(from, { text: "¡Buen día! El grupo ya está abierto, no se olviden de leer las reglas." });
+    }
+
+    if (text === "#ayuda") {
+      await sock.sendMessage(from, {
+        text: `📚 *Comandos disponibles*:
+1. #tag "texto" – Etiqueta a todos con el texto.
+2. #actualizarcarpeta01...05 – Guarda una lista.
+3. #carpeta01...05 – Muestra la lista guardada.
+4. #leitobotbusca "texto" – Busca texto en las carpetas.
+5. #cerrargrupo – Cierra el grupo.
+6. #abrirgrupo – Abre el grupo.
+7. leitobot – Te saluda.
+8. #ayuda – Muestra este mensaje.
+9. #ban @usuario – Expulsa a un usuario (solo admins).`,
+      });
+    }
+
+    // Comando #ban
+    if (text?.startsWith("#ban") && isGroup) {
+      const groupMetadata = await sock.groupMetadata(from);
+      const botNumber = sock.user.id.split(":")[0] + "@s.whatsapp.net";
+      const isBotAdmin = groupMetadata.participants.find(p => p.id === botNumber && p.admin);
+      const isUserAdmin = groupMetadata.participants.find(p => p.id === msg.key.participant && p.admin);
+
+      if (!isBotAdmin) {
+        await sock.sendMessage(from, { text: "❌ Necesito ser administrador para poder expulsar miembros." });
+        return;
+      }
+
+      if (!isUserAdmin) {
+        await sock.sendMessage(from, { text: "⚠️ Solo los administradores pueden usar este comando." });
+        return;
+      }
+
+      const mentioned = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid;
+      if (mentioned && mentioned.length > 0) {
+        for (const target of mentioned) {
+          await sock.groupParticipantsUpdate(from, [target], "remove");
+          await sock.sendMessage(from, {
+            text: `@${target.split("@")[0]} Fuiste baneado por Leo.`,
+            mentions: [target]
+          });
+        }
+      } else {
+        await sock.sendMessage(from, {
+          text: "👤 Debes mencionar al usuario que deseas expulsar. Ejemplo: #ban @usuario"
+        });
+      }
+    }
+  });
+}
+
+startBot();
+
