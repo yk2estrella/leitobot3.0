@@ -1,8 +1,18 @@
+// ====== Servidor Express para Render ======
+const express = require("express");
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.get("/", (req, res) => res.send("✅ Leitobot corriendo en Render 🚀"));
+app.listen(PORT, () => console.log(`🌐 Servidor web en puerto ${PORT}`));
+
+// ====== Dependencias de Baileys ======
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require("@whiskeysockets/baileys");
 const { Boom } = require("@hapi/boom");
 const fs = require("fs");
 const qrcode = require("qrcode-terminal");
 
+// ====== Base de datos simple en JSON ======
 const dbPath = "./carpetas.json";
 let carpetas = fs.existsSync(dbPath)
   ? JSON.parse(fs.readFileSync(dbPath))
@@ -18,12 +28,14 @@ function guardarDB() {
   fs.writeFileSync(dbPath, JSON.stringify(carpetas, null, 2));
 }
 
+// ====== Función principal del bot ======
 async function startBot() {
   const { state, saveCreds } = await useMultiFileAuthState("session");
 
   const sock = makeWASocket({
     auth: state,
     logger: require("pino")({ level: "silent" }),
+    browser: ["Leitobot", "Chrome", "1.0"] // Evita problemas en Render
   });
 
   sock.ev.on("creds.update", saveCreds);
@@ -47,6 +59,7 @@ async function startBot() {
     }
   });
 
+  // Bienvenida a nuevos miembros
   sock.ev.on("group-participants.update", async (update) => {
     const { id, participants, action } = update;
     if (action === "add") {
@@ -65,6 +78,7 @@ async function startBot() {
     }
   });
 
+  // Mensajes entrantes
   sock.ev.on("messages.upsert", async ({ messages }) => {
     const msg = messages[0];
     if (!msg.message || msg.key.fromMe) return;
@@ -176,4 +190,5 @@ async function startBot() {
   });
 }
 
+// Iniciar el bot
 startBot();
